@@ -1,3 +1,8 @@
+![Build Status][build-badge]
+
+[build-badge]: https://github.com/pawel-slowik/docker-containers-proxy/workflows/tests/badge.svg
+
+
 # Nginx proxy for Docker containers
 
 This script configures and starts a [nginx](https://nginx.org/) HTTP proxy for
