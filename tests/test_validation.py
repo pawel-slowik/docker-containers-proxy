@@ -1,5 +1,6 @@
 import pytest
-from docker_container_proxy import PortConflictError, DockerContainer, HTTPProxyServer, HTTPProxy
+from docker_container_proxy import PortConflictError, DockerContainer, HTTPProxy
+from docker_container_proxy import HTTPProxyServer, DashboardServer
 
 
 def test_multiple_container_names() -> None:
@@ -20,18 +21,25 @@ def test_server_port_conflict() -> None:
 
 
 def test_proxy_without_servers() -> None:
+    dashboard_server = DashboardServer(
+        host_name="_dashboard",
+        domain="example.com",
+        listen=80,
+        proxy_servers=(),
+    )
     with pytest.raises(ValueError):
         HTTPProxy(
             pid_file="foo.pid",
             access_log_file="access.log",
             error_log_file="error.log",
             listen=80,
-            servers=(),
+            proxy_servers=(),
+            dashboard_server=dashboard_server,
         )
 
 
 def test_proxy_with_conflicting_servers() -> None:
-    servers = (
+    proxy_servers = (
         HTTPProxyServer(
             host_name="www",
             domain="example.com",
@@ -49,11 +57,18 @@ def test_proxy_with_conflicting_servers() -> None:
             docker_container=DockerContainer(name="y", ports=()),
         ),
     )
+    dashboard_server = DashboardServer(
+        host_name="_dashboard",
+        domain="example.com",
+        listen=8082,
+        proxy_servers=proxy_servers,
+    )
     with pytest.raises(ValueError):
         HTTPProxy(
             pid_file="foo.pid",
             access_log_file="access.log",
             error_log_file="error.log",
             listen=80,
-            servers=servers,
+            proxy_servers=proxy_servers,
+            dashboard_server=dashboard_server,
         )

@@ -11,7 +11,8 @@ currently running [Docker](https://www.docker.com/) containers.
 It's meant to be used as a tool for exposing the HTTP service from multiple
 containers, using host names instead of port numbers to distinguish between
 them. It's mainly useful in a local development environment with multiple
-unrelated dockerized projects.
+unrelated dockerized projects. To aid in this, it provides a simple dashboard
+listing the exposed containers along with their URLs.
 
 
 ## Usage scenario
@@ -23,7 +24,9 @@ supports them. However, this still leaves us with URLs of the form
 `http://127.0.0.1:8080` for one project and `http://127.0.0.1:8081` for another,
 which can be easily mixed up. The aim of this project is to replace the URLs
 with something along the lines of `http://project-one.test` and
-`http://another-project.test`.
+`http://another-project.test`. The included dashboard makes it easier to get an
+overview of running services / projects and to pick the URL of the project we
+are currently working on.
 
 
 ## Installation
@@ -57,7 +60,8 @@ configuration. If you wish to customize it, run `/path/docker_container_proxy.py
 
 If you are satisfied with the result, re-run the command without the `--dry-run`
 flag. This will save the generated configuration into a file and start the nginx
-server. It will also print the proxied URL of each container.
+server. It will also print the proxied URL of each container, along with the URL
+of the dashboard.
 
 Please note that even though the generated configuration refers to proxied
 containers using host names in the `-d` domain, the script does not modify your
@@ -103,6 +107,15 @@ the script will generate the following nginx configuration:
 
         server {
             listen 8080;
+            server_name _dashboard.docker.test;
+            location / {
+                add_header Content-Type text/html;
+                return 200 '<!DOCTYPE html>some generated HTML here...</html>';
+            }
+        }
+
+        server {
+            listen 8080;
             server_name slim-soap-server.docker.test;
             location / {
                 proxy_pass http://localhost:32769;
@@ -128,6 +141,8 @@ Main points worth noting:
 - There's a catch-all / default proxy that always responds with a HTTP 400 Bad
   Request error. This is to make sure that the proxied servers only handle
   requests that are explicitly targeted at a given server.
+- There's also a simple dashboard listing all the proxied containers with their
+  respective URLs. It can be accessed with the `_dashboard` host name.
 - As mentioned above in the section regarding DNS configuration, the generated
   host names must be made resolvable, e.g. by manually adding entries to the
   `/etc/hosts` file:
@@ -140,6 +155,7 @@ include URLs of the proxied containers:
 
     http://slim-soap-server.docker.test:8080/
     http://districts.docker.test:8080/
+    http://_dashboard.docker.test:8080/
     configuration saved to /home/test/.local/share/docker_container_proxy/nginx.conf
     proxy restarted
 

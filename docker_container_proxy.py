@@ -90,10 +90,27 @@ class PortConflictError(Exception):
 
 
 @dataclasses.dataclass(frozen=True)
-class HTTPProxyServer:
+class Server:
     host_name: str
     domain: str
     listen: int
+
+    @property
+    def server_name(self) -> str:
+        return self.host_name + "." + self.domain
+
+    @property
+    def url(self) -> str:
+        return f"http://{self.server_name}:{self.listen}/"
+
+    def compare(self, other: Server) -> Optional[str]:
+        if self.server_name == other.server_name:
+            return f"server name {self.server_name}"
+        return None
+
+
+@dataclasses.dataclass(frozen=True)
+class HTTPProxyServer(Server):
     proxied_host: str
     proxied_port: int
     docker_container: DockerContainer
@@ -104,14 +121,6 @@ class HTTPProxyServer:
                 f"proxy with server name {self.server_name}"
                 f" can't listen on port {self.listen} because it conflicts with the proxied port"
             )
-
-    @property
-    def server_name(self) -> str:
-        return self.host_name + "." + self.domain
-
-    @property
-    def url(self) -> str:
-        return f"http://{self.server_name}:{self.listen}/"
 
     def config(self) -> str:
         template = string.Template("""\
@@ -124,6 +133,76 @@ server {
 }
 """)
         return template.substitute(dataclasses.asdict(self), server_name=self.server_name)
+
+    def compare(self, other: Server) -> Optional[str]:
+        reason = super().compare(other)
+        if reason is not None:
+            return reason
+        if isinstance(other, HTTPProxyServer) and self.proxied_port == other.proxied_port:
+            return f"proxied port {self.proxied_port}"
+        return None
+
+
+@dataclasses.dataclass(frozen=True)
+class DashboardServer(Server):
+    proxy_servers: tuple[HTTPProxyServer, ...]
+
+    def config(self) -> str:
+        title = "hosts proxied for Docker containers"
+
+        def server_html(server: HTTPProxyServer) -> str:
+            return (
+                "<tr>"
+                f"<td><a href=\"{server.url}\">{server.host_name}</a></td>"
+                f"<td><a href=\"{server.url}\">{server.docker_container.name}</a></td>"
+                f"<td><a href=\"{server.url}\">{server.url}</a></td>"
+                "</tr>"
+            )
+
+        def html(proxy_servers: tuple[HTTPProxyServer, ...]) -> str:
+            header_html = (
+                "<!DOCTYPE html>"
+                "<html lang=\"en\">"
+                "<head>"
+                f"<title>{title}</title>"
+                "<style>"
+                "table { width: 80%; margin: auto; }"
+                " td, th { border-spacing: 0; border-bottom-style: solid; border-width: 1px; }"
+                " th { border-top-style: solid; }"
+                " td, th { padding: 0.5ex; }"
+                "</style>"
+                "</head>"
+                "<body>"
+                "<table>"
+                f"<caption>{title}</caption>"
+                "<thead>"
+                "<tr><th>host</th><th>Docker container</th><th>URL</th></tr>"
+                "</thead>"
+                "<tbody>"
+            )
+            footer_html = (
+                "</tbody>"
+                "</table>"
+                "</body>"
+                "</html>"
+            )
+            return header_html + "".join(map(server_html, proxy_servers)) + footer_html
+
+        template = string.Template("""\
+server {
+    listen $listen;
+    server_name $server_name;
+    location / {
+        add_header Content-Type text/html;
+        return 200 '$html';
+    }
+}
+""")
+        return template.substitute(
+            listen=self.listen,
+            server_name=self.server_name,
+            html=html(self.proxy_servers),
+        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -186,20 +265,12 @@ def check_uniqueness(proxies: Iterable[HTTPProxyServer]) -> None:
 
 
 def find_duplicated_proxy_property(proxies: Iterable[HTTPProxyServer]) -> Optional[Duplicate]:
-
-    def compare(proxy: HTTPProxyServer, another_proxy: HTTPProxyServer) -> Optional[str]:
-        if proxy.server_name == another_proxy.server_name:
-            return f"server name {proxy.server_name}"
-        if proxy.proxied_port == another_proxy.proxied_port:
-            return f"proxied port {proxy.proxied_port}"
-        return None
-
     proxies = tuple(proxies)
     for index, proxy in enumerate(proxies):
         for another_index, another_proxy in enumerate(proxies):
             if index == another_index:
                 continue
-            reason = compare(proxy, another_proxy)
+            reason = proxy.compare(another_proxy)
             if reason is not None:
                 return Duplicate(
                     reason=reason,
@@ -239,25 +310,28 @@ class HTTPProxy:
     error_log_file: str
     access_log_file: str
     listen: int
-    servers: tuple[HTTPProxyServer, ...]
+    proxy_servers: tuple[HTTPProxyServer, ...]
+    dashboard_server: DashboardServer
 
     def __post_init__(self) -> None:
-        if not self.servers:
-            raise ValueError("no servers to set up")
-        check_uniqueness(self.servers)
+        if not self.proxy_servers:
+            raise ValueError("no proxy servers to set up")
+        check_uniqueness(self.proxy_servers)
 
     @staticmethod
     def from_config_generator(
         base_confg: BaseProxyConfig,
         generator: Generator,
-        servers: Iterable[HTTPProxyServer],
+        proxy_servers: Iterable[HTTPProxyServer],
+        dashboard_server: DashboardServer,
     ) -> HTTPProxy:
         return HTTPProxy(
             pid_file=os.path.join(generator.path_prefix, "nginx.pid"),
             error_log_file=os.path.join(generator.path_prefix, "error.log"),
             access_log_file=os.path.join(generator.path_prefix, "access.log"),
             listen=base_confg.listen,
-            servers=tuple(servers),
+            proxy_servers=tuple(proxy_servers),
+            dashboard_server=dashboard_server,
         )
 
     def config(self) -> str:
@@ -280,7 +354,7 @@ http {
 }
 """)
         servers = textwrap.indent(
-            "\n".join(server.config() for server in self.servers),
+            "\n".join(server.config() for server in (self.dashboard_server,) + self.proxy_servers),
             "    ",
         )
         return template.substitute(dataclasses.asdict(self), servers=servers.strip())
@@ -340,12 +414,20 @@ def main() -> None:
     containers = list_containers()
     proxy_servers = generate_proxies(containers, 80, IPVersion.V4, base_config)
     proxy_servers = simplify_proxy_host_names(proxy_servers)
-    proxy = HTTPProxy.from_config_generator(base_config, generator, proxy_servers)
+    proxy_servers = tuple(proxy_servers)
+    dashboard_server = DashboardServer(
+        host_name="_dashboard",
+        domain=base_config.domain,
+        listen=base_config.listen,
+        proxy_servers=proxy_servers,
+    )
+    proxy = HTTPProxy.from_config_generator(base_config, generator, proxy_servers, dashboard_server)
     if args.dry_run:
         print(proxy.config(), end="")
     else:
-        for proxy_server in proxy.servers:
+        for proxy_server in proxy.proxy_servers:
             print(proxy_server.url)
+        print(proxy.dashboard_server.url)
         config_filename = generator.write(proxy.config())
         print(f"configuration saved to {config_filename}")
         restart_proxy(config_filename, proxy.pid_file)
