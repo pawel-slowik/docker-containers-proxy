@@ -1,16 +1,12 @@
 from typing import Iterable
 import pytest
-from docker_container_proxy import DockerContainer, HTTPProxyServer
-from docker_container_proxy import find_duplicated_proxy_property
-
-
-Proxy = HTTPProxyServer
-Container = DockerContainer
+from docker_container_proxy import DockerContainer, Server, HTTPProxyServer, DashboardServer
+from docker_container_proxy import find_duplicated_server_property
 
 
 def test_no_duplicate() -> None:
-    proxies = [
-        Proxy(
+    proxies = (
+        HTTPProxyServer(
             host_name="h",
             domain="d",
             listen=1,
@@ -18,7 +14,7 @@ def test_no_duplicate() -> None:
             proxied_port=2,
             docker_container=DockerContainer(name="c", ports=()),
         ),
-        Proxy(
+        HTTPProxyServer(
             host_name="j",
             domain="d",
             listen=1,
@@ -26,17 +22,23 @@ def test_no_duplicate() -> None:
             proxied_port=3,
             docker_container=DockerContainer(name="c", ports=()),
         ),
-    ]
-    duplicate = find_duplicated_proxy_property(proxies)
+    )
+    dashboard = DashboardServer(
+        host_name="k",
+        domain="d",
+        listen=1,
+        proxy_servers=proxies,
+    )
+    duplicate = find_duplicated_server_property(proxies + (dashboard, ))
     assert duplicate is None
 
 
 @pytest.mark.parametrize(
-    "proxies,expected_duplicate_reason",
+    "servers,expected_duplicate_reason",
     [
         (
             [
-                Proxy(
+                HTTPProxyServer(
                     host_name="h",
                     domain="d",
                     listen=1,
@@ -44,7 +46,7 @@ def test_no_duplicate() -> None:
                     proxied_port=2,
                     docker_container=DockerContainer(name="j", ports=()),
                 ),
-                Proxy(
+                HTTPProxyServer(
                     host_name="h",
                     domain="d",
                     listen=5,
@@ -57,7 +59,7 @@ def test_no_duplicate() -> None:
         ),
         (
             [
-                Proxy(
+                HTTPProxyServer(
                     host_name="h",
                     domain="d",
                     listen=1,
@@ -65,7 +67,7 @@ def test_no_duplicate() -> None:
                     proxied_port=2,
                     docker_container=DockerContainer(name="j", ports=()),
                 ),
-                Proxy(
+                HTTPProxyServer(
                     host_name="g",
                     domain="b",
                     listen=5,
@@ -76,9 +78,28 @@ def test_no_duplicate() -> None:
             ],
             "proxied port 2",
         ),
+        (
+            [
+                HTTPProxyServer(
+                    host_name="h",
+                    domain="d",
+                    listen=1,
+                    proxied_host="p",
+                    proxied_port=2,
+                    docker_container=DockerContainer(name="j", ports=()),
+                ),
+                DashboardServer(
+                    host_name="h",
+                    domain="d",
+                    listen=5,
+                    proxy_servers=(),
+                ),
+            ],
+            "server name h.d",
+        ),
     ]
 )
-def test_duplicate(proxies: Iterable[HTTPProxyServer], expected_duplicate_reason: str) -> None:
-    duplicate = find_duplicated_proxy_property(proxies)
+def test_duplicate(servers: Iterable[Server], expected_duplicate_reason: str) -> None:
+    duplicate = find_duplicated_server_property(servers)
     assert duplicate is not None
     assert duplicate.reason == expected_duplicate_reason

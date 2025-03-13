@@ -103,6 +103,10 @@ class Server:
     def url(self) -> str:
         return f"http://{self.server_name}:{self.listen}/"
 
+    @property
+    def info(self) -> str:
+        raise NotImplementedError
+
     def compare(self, other: Server) -> Optional[str]:
         if self.server_name == other.server_name:
             return f"server name {self.server_name}"
@@ -121,6 +125,10 @@ class HTTPProxyServer(Server):
                 f"proxy with server name {self.server_name}"
                 f" can't listen on port {self.listen} because it conflicts with the proxied port"
             )
+
+    @property
+    def info(self) -> str:
+        return f"HTTP proxy for Docker container {self.docker_container.name}"
 
     def config(self) -> str:
         template = string.Template("""\
@@ -146,6 +154,10 @@ server {
 @dataclasses.dataclass(frozen=True)
 class DashboardServer(Server):
     proxy_servers: tuple[HTTPProxyServer, ...]
+
+    @property
+    def info(self) -> str:
+        return "dashboard"
 
     def config(self) -> str:
         title = "hosts proxied for Docker containers"
@@ -250,32 +262,32 @@ def generate_proxies(
 @dataclasses.dataclass(frozen=True)
 class Duplicate:
     reason: str
-    container: DockerContainer
-    another_container: DockerContainer
+    server_info: str
+    another_server_info: str
 
 
-def check_uniqueness(proxies: Iterable[HTTPProxyServer]) -> None:
-    duplicate = find_duplicated_proxy_property(proxies)
+def check_uniqueness(servers: Iterable[Server]) -> None:
+    duplicate = find_duplicated_server_property(servers)
     if not duplicate:
         return
     raise ValueError(
-        f"duplicated {duplicate.reason}, used both by docker container"
-        f" {duplicate.container.name} and by {duplicate.another_container.name}"
+        f"duplicated {duplicate.reason}, used both by"
+        f" {duplicate.server_info} and by {duplicate.another_server_info}"
     )
 
 
-def find_duplicated_proxy_property(proxies: Iterable[HTTPProxyServer]) -> Optional[Duplicate]:
-    proxies = tuple(proxies)
-    for index, proxy in enumerate(proxies):
-        for another_index, another_proxy in enumerate(proxies):
+def find_duplicated_server_property(servers: Iterable[Server]) -> Optional[Duplicate]:
+    servers = tuple(servers)
+    for index, server in enumerate(servers):
+        for another_index, another_server in enumerate(servers):
             if index == another_index:
                 continue
-            reason = proxy.compare(another_proxy)
+            reason = server.compare(another_server)
             if reason is not None:
                 return Duplicate(
                     reason=reason,
-                    container=proxy.docker_container,
-                    another_container=another_proxy.docker_container,
+                    server_info=server.info,
+                    another_server_info=another_server.info,
                 )
     return None
 
@@ -316,7 +328,7 @@ class HTTPProxy:
     def __post_init__(self) -> None:
         if not self.proxy_servers:
             raise ValueError("no proxy servers to set up")
-        check_uniqueness(self.proxy_servers)
+        check_uniqueness(self.proxy_servers + (self.dashboard_server, ))
 
     @staticmethod
     def from_config_generator(
