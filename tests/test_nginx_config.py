@@ -131,8 +131,7 @@ def test_proxy_config() -> None:
         error_log_file="/var/log/nginx/error.log",
         access_log_file="/var/log/nginx/access.log",
         listen=80,
-        proxy_servers=proxy_servers,
-        dashboard_server=dashboard_server,
+        servers=(dashboard_server, ) + proxy_servers,
     )
     assert proxy.config() == """\
 pid /run/nginx.pid;

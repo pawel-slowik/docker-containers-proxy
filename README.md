@@ -153,9 +153,9 @@ Main points worth noting:
 After re-running the command without the `--dry-run` flag the output will
 include URLs of the proxied containers:
 
+    http://_dashboard.docker.test:8080/
     http://slim-soap-server.docker.test:8080/
     http://districts.docker.test:8080/
-    http://_dashboard.docker.test:8080/
     configuration saved to /home/test/.local/share/docker_container_proxy/nginx.conf
     proxy restarted
 

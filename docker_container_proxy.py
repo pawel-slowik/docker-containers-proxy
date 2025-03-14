@@ -107,6 +107,9 @@ class Server:
     def info(self) -> str:
         raise NotImplementedError
 
+    def config(self) -> str:
+        raise NotImplementedError
+
     def compare(self, other: Server) -> Optional[str]:
         if self.server_name == other.server_name:
             return f"server name {self.server_name}"
@@ -322,28 +325,25 @@ class HTTPProxy:
     error_log_file: str
     access_log_file: str
     listen: int
-    proxy_servers: tuple[HTTPProxyServer, ...]
-    dashboard_server: DashboardServer
+    servers: tuple[Server, ...]
 
     def __post_init__(self) -> None:
-        if not self.proxy_servers:
-            raise ValueError("no proxy servers to set up")
-        check_uniqueness(self.proxy_servers + (self.dashboard_server, ))
+        if not self.servers:
+            raise ValueError("no servers to set up")
+        check_uniqueness(self.servers)
 
     @staticmethod
     def from_config_generator(
         base_confg: BaseProxyConfig,
         generator: Generator,
-        proxy_servers: Iterable[HTTPProxyServer],
-        dashboard_server: DashboardServer,
+        servers: Iterable[Server],
     ) -> HTTPProxy:
         return HTTPProxy(
             pid_file=os.path.join(generator.path_prefix, "nginx.pid"),
             error_log_file=os.path.join(generator.path_prefix, "error.log"),
             access_log_file=os.path.join(generator.path_prefix, "access.log"),
             listen=base_confg.listen,
-            proxy_servers=tuple(proxy_servers),
-            dashboard_server=dashboard_server,
+            servers=tuple(servers),
         )
 
     def config(self) -> str:
@@ -366,7 +366,7 @@ http {
 }
 """)
         servers = textwrap.indent(
-            "\n".join(server.config() for server in (self.dashboard_server,) + self.proxy_servers),
+            "\n".join(server.config() for server in self.servers),
             "    ",
         )
         return template.substitute(dataclasses.asdict(self), servers=servers.strip())
@@ -433,13 +433,13 @@ def main() -> None:
         listen=base_config.listen,
         proxy_servers=proxy_servers,
     )
-    proxy = HTTPProxy.from_config_generator(base_config, generator, proxy_servers, dashboard_server)
+    servers = (dashboard_server, ) + proxy_servers
+    proxy = HTTPProxy.from_config_generator(base_config, generator, servers)
     if args.dry_run:
         print(proxy.config(), end="")
     else:
-        for proxy_server in proxy.proxy_servers:
-            print(proxy_server.url)
-        print(proxy.dashboard_server.url)
+        for server in proxy.servers:
+            print(server.url)
         config_filename = generator.write(proxy.config())
         print(f"configuration saved to {config_filename}")
         restart_proxy(config_filename, proxy.pid_file)

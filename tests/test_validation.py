@@ -21,20 +21,13 @@ def test_server_port_conflict() -> None:
 
 
 def test_proxy_without_servers() -> None:
-    dashboard_server = DashboardServer(
-        host_name="_dashboard",
-        domain="example.com",
-        listen=80,
-        proxy_servers=(),
-    )
     with pytest.raises(ValueError):
         HTTPProxy(
             pid_file="foo.pid",
             access_log_file="access.log",
             error_log_file="error.log",
             listen=80,
-            proxy_servers=(),
-            dashboard_server=dashboard_server,
+            servers=(),
         )
 
 
@@ -69,6 +62,5 @@ def test_proxy_with_conflicting_servers() -> None:
             access_log_file="access.log",
             error_log_file="error.log",
             listen=80,
-            proxy_servers=proxy_servers,
-            dashboard_server=dashboard_server,
+            servers=(dashboard_server, ) + proxy_servers,
         )
