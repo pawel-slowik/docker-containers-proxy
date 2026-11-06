@@ -400,10 +400,18 @@ class Generator:
 
 
 def restart_proxy(config_filename: str, pid_filename: str) -> None:
-    nginx_command = ["/usr/sbin/nginx", "-c", config_filename]
-    if os.path.exists(pid_filename):
-        nginx_command += ["-s", "reload"]
-    subprocess.run(nginx_command, check=True)
+    nginx_command = ("/usr/sbin/nginx", "-c", config_filename)
+    if not os.path.exists(pid_filename):
+        subprocess.run(nginx_command, check=True)
+        return
+    try:
+        subprocess.run(nginx_command + ("-s", "reload"), check=True, capture_output=True)
+    except subprocess.CalledProcessError as run_error:
+        if not re.search(rb"kill\(.+\) failed \(3: No such process\)", run_error.stderr):
+            raise
+        # probably a stale PID file, remove it and retry
+        os.remove(pid_filename)
+        subprocess.run(nginx_command, check=True)
 
 
 def main() -> None:
